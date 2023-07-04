@@ -2,7 +2,8 @@
 
 ## Current stage
 
-Finish the first version of Bert.
+1. Finish the first version of Bert.
+2. DQ Learning
 
 ## Future plans
 
