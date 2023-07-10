@@ -45,3 +45,46 @@ class Policy(nn.Module):
         output = self.linear1(output)
         output = self.linear2(output)
         return torch.sigmoid(output)
+
+
+class ActorCrit(nn.Module):
+    def __init__(self, n_channel: int) -> None:
+        super().__init__()
+        self.conv1 = nn.Sequential(
+            nn.Conv2d(n_channel, 4, kernel_size=5, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+            nn.BatchNorm2d(4),
+        )
+        # output: (39-3)/2+1=19
+        self.conv2 = nn.Sequential(
+            nn.Conv2d(4, 16, kernel_size=5, padding=2),
+            nn.ReLU(),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+        )
+        # output: (19-3)/2+1=9
+        self.conv3 = nn.Sequential(
+            nn.Conv2d(16, 16, kernel_size=3, padding=1),
+            nn.MaxPool2d(kernel_size=3, stride=2),
+        )
+        self.linear_size = 9 * 9 * 16
+        self.linear1 = nn.Sequential(nn.Linear(self.linear_size, 256), nn.ReLU())
+
+        self.actor_output_layer = nn.Linear(256, 1)
+        self.crit_output_layer = nn.Linear(256, 1)
+
+    def forward(self, batch: torch.Tensor) -> torch.Tensor:
+        n_batch = batch.shape[0]
+        output = self.conv1(batch)
+        output = self.conv2(output)
+        output = self.conv3(output)
+        output = output.view(n_batch, -1)
+        repr_output = self.linear1(output)
+
+        actor_output = torch.sigmoid(self.actor_output_layer(repr_output))
+        crit_output = self.crit_output_layer(repr_output)
+
+        return {
+            "actor_output": actor_output,
+            "crit_output": crit_output,
+        }
