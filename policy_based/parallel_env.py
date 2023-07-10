@@ -112,8 +112,6 @@ def worker(remote, parent_remote, env_fn_wrapper):
         if cmd == "step":
             ob, reward, terminated, truncated, info = env.step(data)
             done = terminated or truncated
-            if done:
-                ob = env.reset()
             remote.send((ob, reward, done, info))
         elif cmd == "reset":
             ob = env.reset()
