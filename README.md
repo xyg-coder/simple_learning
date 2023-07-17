@@ -3,7 +3,7 @@
 ## Current stage
 
 1. Finish the first version of Bert.
-2. DQ Learning
+2. Some reinforcement learnings
 
 ## Future plans
 
