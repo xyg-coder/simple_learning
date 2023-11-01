@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+import os
+
 import torch
+
+# otherwise it might throw "module 'torch.utils' has no attribute 'checkpoint'" error
+import torch.utils.checkpoint
 from accelerate import Accelerator
 from datasets import load_dataset
+from peft import AutoPeftModelForCausalLM
 from peft import LoraConfig
 from transformers import AdamW
 from transformers import AutoModelForCausalLM
@@ -13,16 +19,18 @@ from transformers import get_scheduler
 from .data_collators import CHOSEN_ATTENTION_MASK
 from .data_collators import CHOSEN_INPUT_IDS
 from .data_collators import CHOSEN_LABELS
-from .data_collators import DpoFinetuneDataCollator
+from .data_collators import FinetuneDataCollator
+from .data_collators import finetune_collate
 from .optimization import create_adamw_paged_32_bit_optimizer
 from .trainer import BaseTrainer
-from .training_arguments import FinetuneArguments
+from .training_arguments import test_arguments
+from .training_arguments import train_arguments
 
 """
-pip install -q xformers wandb datasets gradio tyro>=0.5.7
-pip install accelerate -U
-pip install bitsandbytes -U
-pip install git+https://github.com/huggingface/transformers
+pip install -q xformers wandb datasets gradio tyro>=0.5.7 &&
+pip install accelerate -U &&
+pip install bitsandbytes -U &&
+pip install git+https://github.com/huggingface/transformers &&
 pip install git+https://github.com/huggingface/peft
 huggingface-cli login
 python -m trainer.ppytorch.mlenv.dpo_finetune.finetune_script.py
@@ -42,7 +50,7 @@ This would cause a big reduction of the trainable parameters.
 What we can try is use peft + quantization, but have the last linearLayer require grad
 """
 
-finetune_args = FinetuneArguments()
+finetune_args = test_arguments
 
 """firstly finetune the model
 """
@@ -79,17 +87,26 @@ tokenizer.pad_token = tokenizer.eos_token
 tokenizer.padding_side = "right"  # Fix weird overflow issue with fp16 training
 
 # dataset: a dict of {qid', 'question', 'date', 'metadata', 'response_j', 'response_k'} as the keys
-finetune_dataset = load_dataset(
+dataset = load_dataset(
     finetune_args.dataset_name,
     data_dir=finetune_args.finetune_data_dir,
     split="train",
     use_auth_token=True,
 )
 
-finetune_data_collator = DpoFinetuneDataCollator(
+dataset = dataset.train_test_split(test_size=0.005, seed=None)
+train_data = dataset["train"]
+valid_data = dataset["test"]
+print(f"Size of the train set: {len(train_data)}. Size of the validation set: {len(valid_data)}")
+
+finetune_data_collator = FinetuneDataCollator(
     tokenizer=tokenizer,
     max_length=finetune_args.max_length,
+    label_pad_token_id=finetune_args.label_pad_token_id,
+    max_prompt_length=finetune_args.max_prompt_length,
+    collate_func=finetune_collate,
 )
+
 
 # use paged_adamw_32bit as optimizer
 optimizer = create_adamw_paged_32_bit_optimizer(
@@ -107,7 +124,8 @@ lr_scheduler = get_scheduler(
 ft_trainer = BaseTrainer(
     model=base_model,
     data_collator=finetune_data_collator,
-    dataset=finetune_dataset,
+    dataset=train_data,
+    eval_dataset=valid_data,
     training_args=finetune_args,
     accelerator=accelerator,
     optimizer=optimizer,
@@ -119,3 +137,12 @@ ft_trainer = BaseTrainer(
 )
 
 ft_trainer.train()
+ft_trainer.save_model(finetune_args.finetune_output_dir)
+
+model = AutoPeftModelForCausalLM.from_pretrained(
+    finetune_args.finetune_output_dir, device_map="auto", torch_dtype=torch.bfloat16
+)
+merged_model = model.merge_and_unload()
+
+output_merged_dir = os.path.join(finetune_args.finetune_output_dir, "final_merged_checkpoint")
+merged_model.save_pretrained(output_merged_dir)

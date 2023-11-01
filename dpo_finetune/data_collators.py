@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from typing import Any
+from typing import Callable
 from typing import Dict
 from typing import List
+from typing import Union
 
 from dataclasses import dataclass
 
@@ -22,14 +24,18 @@ REJECTED = "response_k"
 REJECTED_INPUT_IDS = "rejected_input_ids"
 REJECTED_ATTENTION_MASK = "rejected_attention_mask"
 REJECTED_LABELS = "rejected_labels"
+CONCATENATED_INPUT_IDS = "concatenated_input_ids"
+CONCATENATED_ATTENTION_MASK = "concatenated_attention_mask"
+CONCATENATED_LABELS = "concatenated_labels"
 
 
 @dataclass
-class DpoFinetuneDataCollator:
+class FinetuneDataCollator:
     tokenizer: AutoTokenizer
     max_length: int
-    label_pad_token_id: int = -100
-    max_prompt_length: int = 512
+    label_pad_token_id: int
+    max_prompt_length: int
+    collate_func: Callable
 
     def _get_new_attention_mask(
         self,
@@ -103,30 +109,6 @@ class DpoFinetuneDataCollator:
         )
         return batch
 
-    def collate(self, batch: List[Dict]) -> Dict:
-        if len(batch) == 0:
-            return {}
-
-        result = {}
-        # https://stackoverflow.com/questions/73256206
-        for key in batch[0].keys():
-            if "input_id" in key:
-                padding_value = self.tokenizer.pad_token_id
-            elif "attention_mask" in key:
-                padding_value = 0
-            elif "label" in key:
-                padding_value = self.label_pad_token_id
-            else:
-                raise Exception("key is not supported")
-            elements = [sample[key] for sample in batch]
-            padded = torch.nn.utils.rnn.pad_sequence(
-                [torch.LongTensor(element) for element in elements],
-                batch_first=True,
-                padding_value=padding_value,
-            )
-            result[key] = padded
-        return result
-
     def __call__(self, features: List[Dict[str, Any]]) -> Dict[str, Any]:
         """
         Args:
@@ -161,4 +143,91 @@ class DpoFinetuneDataCollator:
                 )
             )
 
-        return self.collate(batch)
+        return self.collate_func(self.tokenizer, self.label_pad_token_id, batch)
+
+
+def finetune_collate(tokenizer: AutoTokenizer, label_pad_token_id, batch: List[Dict]) -> Dict:
+    if len(batch) == 0:
+        return {}
+
+    result = {}
+    # https://stackoverflow.com/questions/73256206
+    for key in batch[0].keys():
+        if "input_id" in key:
+            padding_value = tokenizer.pad_token_id
+        elif "attention_mask" in key:
+            padding_value = 0
+        elif "label" in key:
+            padding_value = label_pad_token_id
+        else:
+            raise Exception("key is not supported")
+        elements = [sample[key] for sample in batch]
+        padded = torch.nn.utils.rnn.pad_sequence(
+            [torch.LongTensor(element) for element in elements],
+            batch_first=True,
+            padding_value=padding_value,
+        )
+        result[key] = padded
+    return result
+
+
+def pad_to_length(tensor: torch.Tensor, length: int, pad_value: Union[int, float], dim: int = -1):
+    if tensor.shape[dim] >= length:
+        return tensor
+
+    pad_size = list(tensor.shape)
+    pad_size[dim] = length - tensor.shape[dim]
+    return torch.cat([tensor, pad_value * torch.ones(*pad_size, dtype=tensor.dtype, device=tensor.device)], dim=dim)
+
+
+def dpo_collate(tokenizer: AutoTokenizer, label_pad_token_id, batch: List[Dict]) -> Dict:
+    """return the {concatenated_input_ids, concatenated_labels, concatenated_attention_mask}
+
+    Args:
+        tokenizer (AutoTokenizer): _description_
+        label_pad_token_id (_type_): _description_
+        batch (List[Dict]): _description_
+
+    Returns:
+        Dict: _description_
+    """
+    pre_concatenated_batch = finetune_collate(tokenizer, label_pad_token_id, batch)
+    if not pre_concatenated_batch or len(pre_concatenated_batch) == 0:
+        return {}
+
+    result = {}
+    # concatenate input_ids, labels and attention_masks
+    assert (
+        pre_concatenated_batch[CHOSEN_INPUT_IDS].shape[1] == pre_concatenated_batch[CHOSEN_ATTENTION_MASK].shape[1]
+        and pre_concatenated_batch[CHOSEN_INPUT_IDS].shape[1] == pre_concatenated_batch[CHOSEN_LABELS].shape[1]
+    )
+    assert (
+        pre_concatenated_batch[REJECTED_INPUT_IDS].shape[1] == pre_concatenated_batch[REJECTED_INPUT_IDS].shape[1]
+        and pre_concatenated_batch[REJECTED_INPUT_IDS].shape[1] == pre_concatenated_batch[REJECTED_LABELS].shape[1]
+    )
+    max_length = max(
+        pre_concatenated_batch[CHOSEN_INPUT_IDS].shape[1], pre_concatenated_batch[REJECTED_INPUT_IDS].shape[1]
+    )
+
+    result[CONCATENATED_INPUT_IDS] = torch.cat(
+        [
+            pad_to_length(pre_concatenated_batch[CHOSEN_INPUT_IDS], max_length, tokenizer.pad_token_id, dim=1),
+            pad_to_length(pre_concatenated_batch[REJECTED_INPUT_IDS], max_length, tokenizer.pad_token_id, dim=1),
+        ],
+        dim=0,
+    )
+    result[CONCATENATED_ATTENTION_MASK] = torch.cat(
+        [
+            pad_to_length(pre_concatenated_batch[CHOSEN_ATTENTION_MASK], max_length, 0, dim=1),
+            pad_to_length(pre_concatenated_batch[REJECTED_ATTENTION_MASK], max_length, 0, dim=1),
+        ],
+        dim=0,
+    )
+    result[CONCATENATED_LABELS] = torch.cat(
+        [
+            pad_to_length(pre_concatenated_batch[CHOSEN_LABELS], max_length, 0, dim=1),
+            pad_to_length(pre_concatenated_batch[REJECTED_LABELS], max_length, 0, dim=1),
+        ],
+        dim=0,
+    )
+    return result
