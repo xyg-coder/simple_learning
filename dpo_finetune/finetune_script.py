@@ -10,7 +10,6 @@ from accelerate import Accelerator
 from datasets import load_dataset
 from peft import AutoPeftModelForCausalLM
 from peft import LoraConfig
-from transformers import AdamW
 from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from transformers import BitsAndBytesConfig
@@ -24,30 +23,29 @@ from .data_collators import finetune_collate
 from .optimization import create_adamw_paged_32_bit_optimizer
 from .trainer import BaseTrainer
 from .training_arguments import test_arguments
-from .training_arguments import train_arguments
 
 """
 pip install -q xformers wandb datasets gradio tyro>=0.5.7 &&
 pip install accelerate -U &&
 pip install bitsandbytes -U &&
 pip install git+https://github.com/huggingface/transformers &&
-pip install git+https://github.com/huggingface/peft
-huggingface-cli login
-python -m trainer.ppytorch.mlenv.dpo_finetune.finetune_script.py
+pip install git+https://github.com/huggingface/peft &&
+pip install --upgrade 'urllib3<2'
 
-
-if see urllib3 cannot import name 'DEFAULT_CIPHERS' from 'urllib3.util.ssl_'
- pip install --upgrade 'urllib3<2'
+Note: pip upgrade is due to
+urllib3 cannot import name 'DEFAULT_CIPHERS' from 'urllib3.util.ssl_'
 
 NotImplementedError: Loading a dataset cached in a LocalFileSystem is not supported.
     sudo vim /usr/local/lib/python3.8/site-packages/datasets/filesystems/__init__.py
     change to -> if fs is not None and fs.protocol[0] != "file":
 
+huggingface-cli login
+python -m trainer.ppytorch.mlenv.dpo_finetune.finetune_script.py
+
+
 current finding:
 1. AutoModelForCausalLM.from_pretrained with quantization_config will use Linear4bit to replace the Linear layers of the attentions.
 This would cause a big reduction of the trainable parameters.
-2. Peft config will add lora adapters to the attention layers. But would freeze the last linearLayer. Not sure if this is expected
-What we can try is use peft + quantization, but have the last linearLayer require grad
 """
 
 finetune_args = test_arguments

@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import torch
 from bitsandbytes.optim import AdamW
 from torch import nn
-from transformers import get_scheduler
 
 from .utils import get_parameter_names
 

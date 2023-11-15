@@ -1,8 +1,6 @@
 """
 python -m trainer.ppytorch.mlenv.dpo_finetune.dpo_script.py
 """
-import os
-
 import torch
 import torch.utils.checkpoint
 from accelerate import Accelerator

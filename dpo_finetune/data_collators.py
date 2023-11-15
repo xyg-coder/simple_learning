@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from typing import Any
 from typing import Callable
 from typing import Dict
@@ -9,7 +10,9 @@ from typing import Union
 from dataclasses import dataclass
 
 import torch
-from transformers import AutoTokenizer
+
+if TYPE_CHECKING:
+    from transformers import AutoTokenizer
 
 INPUT_IDS = "input_ids"
 ATTENTION_MASK = "attention_mask"
