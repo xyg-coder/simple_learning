@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from typing import Dict
 
 import os
@@ -10,14 +11,15 @@ from accelerate import Accelerator
 from peft import PeftModel
 from peft import get_peft_model
 from peft import prepare_model_for_kbit_training
-from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 from transformers import PreTrainedModel
 
-from .training_arguments import FinetuneArguments
 from .utils import WEIGHTS_NAME
 from .utils import unwrap_model
+
+if TYPE_CHECKING:
+    from .training_arguments import FinetuneArguments
 
 
 class BaseTrainer:
